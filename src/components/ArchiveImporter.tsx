@@ -13,11 +13,19 @@ type FileError = { name: string; message: string };
 const dateFmt = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeZone: "UTC" });
 const fmt = (d: Date | null) => (d ? dateFmt.format(d) : "n/a");
 
-export function ArchiveImporter() {
+const BATCH_SIZE = 500;
+
+export function ArchiveImporter({ canSave }: { canSave: boolean }) {
   const [result, setResult] = useState<ParseResult | null>(null);
   const [errors, setErrors] = useState<FileError[]>([]);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [save, setSave] = useState<
+    | { state: "idle" }
+    | { state: "saving"; done: number; total: number }
+    | { state: "done"; total: number }
+    | { state: "error"; message: string; done: number; total: number }
+  >({ state: "idle" });
 
   const handleFiles = useCallback(async (files: FileList | File[]) => {
     setBusy(true);
@@ -37,6 +45,43 @@ export function ArchiveImporter() {
     setResult(parsed.length ? mergeResults(parsed) : null);
     setBusy(false);
   }, []);
+
+  const saveTweets = useCallback(async () => {
+    if (!result) return;
+    const tweets = importableTweets(result.tweets);
+    setSave({ state: "saving", done: 0, total: tweets.length });
+    for (let i = 0; i < tweets.length; i += BATCH_SIZE) {
+      const batch = tweets.slice(i, i + BATCH_SIZE).map((t) => ({
+        xTweetId: t.xTweetId,
+        createdAt: t.createdAt.toISOString(),
+        text: t.text,
+        hashtags: t.hashtags,
+        mentions: t.mentions,
+        inReplyToId: t.inReplyToId,
+        quotedId: t.quotedId,
+      }));
+      try {
+        const res = await fetch("/api/ingest/archive", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tweets: batch }),
+        });
+        if (!res.ok) {
+          const message =
+            res.status === 401
+              ? "Your session expired. Connect X again, then retry."
+              : "Something went wrong while saving. You can retry safely: already-saved posts are skipped.";
+          setSave({ state: "error", message, done: i, total: tweets.length });
+          return;
+        }
+      } catch {
+        setSave({ state: "error", message: "Network error. You can retry safely.", done: i, total: tweets.length });
+        return;
+      }
+      setSave({ state: "saving", done: Math.min(i + BATCH_SIZE, tweets.length), total: tweets.length });
+    }
+    setSave({ state: "done", total: tweets.length });
+  }, [result]);
 
   const summary = result ? summarize(result.tweets) : null;
   const preview = result ? importableTweets(result.tweets).slice(-8).reverse() : [];
@@ -139,13 +184,20 @@ export function ArchiveImporter() {
           <div>
             <button
               type="button"
-              disabled
-              className="rounded-full bg-foreground px-5 py-2.5 text-sm font-medium text-background opacity-40"
+              disabled={!canSave || save.state === "saving" || save.state === "done"}
+              onClick={() => void saveTweets()}
+              className="rounded-full bg-foreground px-5 py-2.5 text-sm font-medium text-background disabled:opacity-40"
             >
-              Import {summary.importable.toLocaleString()} posts
+              {save.state === "saving"
+                ? `Saving… ${save.done.toLocaleString()} / ${save.total.toLocaleString()}`
+                : `Import ${summary.importable.toLocaleString()} posts`}
             </button>
-            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-              Saving requires signing in with X, which is added in the next step.
+            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400" aria-live="polite">
+              {!canSave && "Connect your X account above to save these posts."}
+              {canSave && save.state === "idle" &&
+                "Post text is stored encrypted and removed automatically after the retention period."}
+              {save.state === "done" && `Saved ${save.total.toLocaleString()} posts.`}
+              {save.state === "error" && save.message}
             </p>
           </div>
         </section>

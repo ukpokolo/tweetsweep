@@ -1,6 +1,6 @@
 import { getEnv } from "@/env";
 import { encrypt } from "@/lib/crypto";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import type { XOAuthConfig, XTokens, XUser } from "@/lib/x/oauth";
 
 export function xOAuthConfig(): XOAuthConfig {
@@ -21,7 +21,7 @@ export async function saveLogin(me: XUser, tokens: XTokens): Promise<string> {
     expiresAt: tokens.expiresAt,
     scopes: tokens.scopes,
   };
-  const user = await db.user.upsert({
+  const user = await getDb().user.upsert({
     where: { xUserId: me.id },
     create: { xUserId: me.id, handle: me.username, account: { create: data } },
     update: { handle: me.username, account: { upsert: { create: data, update: data } } },

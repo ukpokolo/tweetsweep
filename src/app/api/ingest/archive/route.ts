@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getEnv } from "@/env";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { archiveBatchSchema, toTweetRows } from "@/lib/ingest/archive";
 import { getSessionUserId } from "@/lib/session";
 
@@ -25,6 +25,6 @@ export async function POST(req: NextRequest) {
     retentionDays: env.TWEET_RETENTION_DAYS,
   });
   // skipDuplicates makes re-uploading the same archive safe.
-  const { count } = await db.tweet.createMany({ data: rows, skipDuplicates: true });
+  const { count } = await getDb().tweet.createMany({ data: rows, skipDuplicates: true });
   return NextResponse.json({ received: rows.length, inserted: count });
 }

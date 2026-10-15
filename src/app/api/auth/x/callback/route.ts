@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
     const cfg = xOAuthConfig();
     const tokens = await exchangeCode(cfg, { code: outcome.code, verifier: flow.verifier });
     const me = await fetchMe(tokens.accessToken);
-    await createSession(await saveLogin(me, tokens));
+    await createSession(await saveLogin(me, tokens), me.username);
   } catch (e) {
     // Log the reason server-side; show the user a generic message.
     console.error("X login failed:", e instanceof Error ? e.message : e);

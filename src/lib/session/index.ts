@@ -17,17 +17,24 @@ const cookieOptions = (maxAge: number) => ({
   maxAge,
 });
 
-export async function createSession(userId: string): Promise<void> {
-  const token = signToken({ uid: userId }, getEnv().SESSION_SECRET, SESSION_TTL);
+export async function createSession(userId: string, handle: string): Promise<void> {
+  const token = signToken({ uid: userId, handle }, getEnv().SESSION_SECRET, SESSION_TTL);
   (await cookies()).set(SESSION_COOKIE, token, cookieOptions(SESSION_TTL));
 }
 
-/** The signed-in user's id, or null. */
-export async function getSessionUserId(): Promise<string | null> {
+export type Session = { userId: string; handle: string };
+
+/** The signed-in user, or null. */
+export async function getSession(): Promise<Session | null> {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return null;
   const payload = verifyToken(token, getEnv().SESSION_SECRET);
-  return typeof payload?.uid === "string" ? payload.uid : null;
+  if (typeof payload?.uid !== "string" || typeof payload.handle !== "string") return null;
+  return { userId: payload.uid, handle: payload.handle };
+}
+
+export async function getSessionUserId(): Promise<string | null> {
+  return (await getSession())?.userId ?? null;
 }
 
 export async function destroySession(): Promise<void> {
