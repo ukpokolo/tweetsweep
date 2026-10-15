@@ -1,0 +1,145 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum TweetSource {
+  TIMELINE
+  ARCHIVE
+}
+
+enum Decision {
+  PENDING
+  APPROVED
+  SKIPPED
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+  CANCELLED
+}
+
+enum ItemStatus {
+  QUEUED
+  DELETED
+  ALREADY_GONE
+  FAILED
+}
+
+model User {
+  id        String   @id @default(cuid())
+  xUserId   String   @unique
+  handle    String
+  createdAt DateTime @default(now())
+
+  account  XAccount?
+  tweets   Tweet[]
+  searches SearchRun[]
+  jobs     DeletionJob[]
+}
+
+// OAuth tokens, encrypted with AES-256-GCM (iv | tag | ciphertext).
+model XAccount {
+  userId          String   @id
+  accessTokenEnc  Bytes
+  refreshTokenEnc Bytes
+  expiresAt       DateTime
+  scopes          String[]
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Tweet {
+  id          String      @id @default(cuid())
+  userId      String
+  xTweetId    String
+  source      TweetSource
+  createdAt   DateTime // when the tweet was posted
+  hashtags    String[]
+  mentions    String[]
+  inReplyToId String? // X id of the parent tweet, if a reply
+  quotedId    String? // X id of the quoted tweet, if a quote
+
+  // Tweet text is encrypted and purged after contentExpiresAt.
+  textEnc          Bytes?
+  contentExpiresAt DateTime
+
+  // Written in the embeddings step; column is vector(1024) (Voyage).
+  embedding Unsupported("vector(1024)")?
+
+  deletedAt DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  matches   Match[]
+
+  @@unique([userId, xTweetId])
+  @@index([userId, createdAt])
+  @@index([contentExpiresAt])
+}
+
+// One filter / concept search by a user.
+model SearchRun {
+  id        String   @id @default(cuid())
+  userId    String
+  concept   String?
+  filters   Json
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  matches Match[]
+
+  @@index([userId, createdAt])
+}
+
+model Match {
+  id         String   @id @default(cuid())
+  searchId   String
+  tweetId    String
+  similarity Float? // vector similarity (semantic search)
+  label      String? // LLM label
+  confidence Float? // LLM confidence 0..1
+  reason     String? // one-line LLM reason
+  decision   Decision @default(PENDING)
+
+  search SearchRun @relation(fields: [searchId], references: [id], onDelete: Cascade)
+  tweet  Tweet     @relation(fields: [tweetId], references: [id], onDelete: Cascade)
+
+  @@unique([searchId, tweetId])
+  @@index([searchId, decision])
+}
+
+model DeletionJob {
+  id                String    @id @default(cuid())
+  userId            String
+  dryRun            Boolean
+  status            JobStatus @default(PENDING)
+  // A real (non dry-run) job requires the user to confirm their backup.
+  backupConfirmedAt DateTime?
+  createdAt         DateTime  @default(now())
+
+  user  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items DeletionItem[]
+
+  @@index([userId, createdAt])
+}
+
+model DeletionItem {
+  id        String     @id @default(cuid())
+  jobId     String
+  xTweetId  String
+  status    ItemStatus @default(QUEUED)
+  attempts  Int        @default(0)
+  lastError String?
+
+  job DeletionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, xTweetId])
+  @@index([jobId, status])
+}
